@@ -5,8 +5,9 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.142.2",
     "uvicorn>=0.54.0",
-    "spotipy>=2.26.0",
     "python-dotenv>=1.2.4",
+    "pydantic>=2.13.5",
+    "spotifyscraper==3.9.2",
 ]
 
 [tool.fastapi]
