@@ -8,10 +8,8 @@ spotify_service = SpotifyService()
 
 @router.get("/playlist", response_model=Playlist)
 async def get_playlist(url: str = Query(..., description="Spotify Playlist URL or ID")):
-    try:
         data = spotify_service.get_playlist_details(url)
+        if not data:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+
         return data
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch playlist: {str(e)}")
