@@ -22,6 +22,9 @@ class SlskdContainer:
     def ensure_running(
         self, username: str, password: str, download_directory: Path
     ) -> tuple[str, str]:
+        download_directory = download_directory.expanduser().resolve()
+        if not download_directory.is_absolute() or not download_directory.is_dir():
+            raise ValueError("choose an existing download folder with an absolute path")
         host_user = f"{os.getuid()}:{os.getgid()}"
         self._prepare_app_directory()
         try:
@@ -39,6 +42,7 @@ class SlskdContainer:
             )
             if container.status == "running" and existing is not None:
                 self._wait_for_api(*existing)
+                self._wait_for_soulseek(*existing)
                 return existing
 
         api_key = secrets.token_urlsafe(32)
@@ -70,6 +74,7 @@ class SlskdContainer:
             raise RuntimeError("slskd did not expose its API port")
         base_url = f"http://127.0.0.1:{port}"
         self._wait_for_api(base_url, api_key)
+        self._wait_for_soulseek(base_url, api_key)
         return base_url, api_key
 
     def _prepare_app_directory(self) -> None:
@@ -109,6 +114,18 @@ class SlskdContainer:
             "api_url": f"http://127.0.0.1:{host_port}" if host_port else None,
             "image": container.image.tags[0] if container.image.tags else None,
         }
+
+    def api_credentials(self) -> tuple[str, str] | None:
+        config_path = self.app_directory / "slskd.yml"
+        if not config_path.exists():
+            return None
+        config = config_path.read_text(encoding="utf-8")
+        api_key = re.search(r'key:\s*"([^"]+)"', config)
+        status = self.status()
+        api_url = status.get("api_url")
+        if api_key is None or not isinstance(api_url, str):
+            return None
+        return api_url, api_key.group(1)
 
     def stop(self) -> dict[str, object]:
         client = self._docker_client()
@@ -207,6 +224,30 @@ class SlskdContainer:
                 pass
             time.sleep(0.5)
         raise RuntimeError("Timed out waiting for slskd API to become ready")
+
+    @staticmethod
+    def _wait_for_soulseek(base_url: str, api_key: str) -> None:
+        deadline = time.monotonic() + 60
+        last_state = "unknown"
+        while time.monotonic() < deadline:
+            try:
+                response = httpx.get(
+                    f"{base_url}/api/v0/application",
+                    headers={"X-API-Key": api_key},
+                    timeout=2,
+                )
+                response.raise_for_status()
+                server = response.json().get("server", {})
+                last_state = server.get("state", "unknown")
+                if server.get("isConnected") and server.get("isLoggedIn"):
+                    return
+            except (httpx.HTTPError, ValueError, AttributeError):
+                pass
+            time.sleep(1)
+        raise RuntimeError(
+            "slskd is running but is not connected to Soulseek "
+            f"(state: {last_state}). Check the Soulseek credentials and slskd logs."
+        )
 
     def _write_config(
         self, username: str, password: str, api_key: str, download_directory: Path
